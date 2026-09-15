@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "3354228345",
+    "project_id": "android-practise-d0b1c",
+    "storage_bucket": "android-practise-d0b1c.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:3354228345:android:c9b813e4b35acc60f3c6a8",
+        "android_client_info": {
+          "package_name": "com.example.tictactoe"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyA_zIT64ZLMeKiceFKDKoybBczQGRdOnEM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
