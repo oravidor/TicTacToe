@@ -28,9 +28,8 @@ public class Main2Activity extends BaseGameActivity {
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        
-        gameRef = FirebaseDatabase.getInstance().getReference("tictactoe");
-        
+
+        gameRef = FirebaseDatabase.getInstance("https://android-practise-d0b1c-default-rtdb.firebaseio.com/").getReference("tictactoe");
         findViewById(R.id.button_new_game).setOnClickListener(view -> resetFirebaseState());
         
         setupFirebaseListener();
