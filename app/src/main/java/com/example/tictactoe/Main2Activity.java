@@ -13,12 +13,23 @@ import com.google.firebase.database.DataSnapshot;
 import com.google.firebase.database.DatabaseError;
 import com.google.firebase.database.DatabaseReference;
 import com.google.firebase.database.FirebaseDatabase;
+import com.google.firebase.database.MutableData;
+import com.google.firebase.database.Transaction;
 import com.google.firebase.database.ValueEventListener;
+import com.google.firebase.auth.FirebaseAuth;
 
-/** The clean duplicate route prepared for the Firebase RTDB lessons. */
+import java.util.HashMap;
+import java.util.Map;
+
+/** A two-device Tic-Tac-Toe board synchronized through Firebase Realtime Database. */
 public class Main2Activity extends BaseGameActivity {
+    private static final String DATABASE_URL =
+            "https://android-practise-d0b1c-default-rtdb.firebaseio.com/";
+    private static final String GAME_PATH = "tictactoe";
+
     private DatabaseReference gameRef;
     private ValueEventListener gameListener;
+    private boolean gameReady;
 
     @Override
     protected String gameModeLabel() {
@@ -29,9 +40,15 @@ public class Main2Activity extends BaseGameActivity {
     protected void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        gameRef = FirebaseDatabase.getInstance("https://android-practise-d0b1c-default-rtdb.firebaseio.com/").getReference("tictactoe");
+        gameRef = FirebaseDatabase.getInstance(DATABASE_URL).getReference(GAME_PATH);
         findViewById(R.id.button_new_game).setOnClickListener(view -> resetFirebaseState());
-        
+
+        if (FirebaseAuth.getInstance().getCurrentUser() == null) {
+            gameStatus.setText("Sign in before opening a shared game.");
+            Toast.makeText(this, "Firebase sign-in is required for the shared game.",
+                    Toast.LENGTH_LONG).show();
+            return;
+        }
         setupFirebaseListener();
     }
 
@@ -40,9 +57,13 @@ public class Main2Activity extends BaseGameActivity {
             @Override
             public void onDataChange(@NonNull DataSnapshot snapshot) {
                 if (!snapshot.exists()) {
-                    resetFirebaseState();
+                    gameReady = false;
+                    gameStatus.setText("Preparing shared game…");
+                    ensureGameExists();
                     return;
                 }
+
+                gameReady = true;
 
                 String firebasePlayer = snapshot.child("currentPlayer").getValue(String.class);
                 Boolean firebaseFinished = snapshot.child("gameFinished").getValue(Boolean.class);
@@ -65,15 +86,10 @@ public class Main2Activity extends BaseGameActivity {
                     }
                 }
 
-                if (firebasePlayer != null) {
-                    while (!model.getCurrentPlayer().equals(firebasePlayer)) {
-                        model.changePlayer();
-                    }
+                if ("O".equals(firebasePlayer)) {
+                    model.changePlayer();
                 }
-
-                if (firebaseFinished != null) {
-                    gameFinished = firebaseFinished;
-                }
+                gameFinished = Boolean.TRUE.equals(firebaseFinished);
 
                 if (model.checkWin()) {
                     gameFinished = true;
@@ -90,7 +106,9 @@ public class Main2Activity extends BaseGameActivity {
 
             @Override
             public void onCancelled(@NonNull DatabaseError error) {
-                Toast.makeText(Main2Activity.this, "Sync error: " + error.getMessage(), Toast.LENGTH_SHORT).show();
+                gameReady = false;
+                gameStatus.setText("Firebase access was denied.");
+                Toast.makeText(Main2Activity.this, permissionMessage(error), Toast.LENGTH_LONG).show();
             }
         };
         gameRef.addValueEventListener(gameListener);
@@ -118,6 +136,10 @@ public class Main2Activity extends BaseGameActivity {
         if (gameFinished) {
             return;
         }
+        if (!gameReady) {
+            Toast.makeText(this, "Waiting for the shared game to load.", Toast.LENGTH_SHORT).show();
+            return;
+        }
 
         Button button = (Button) view;
         String[] position = button.getTag().toString().split(",");
@@ -127,27 +149,167 @@ public class Main2Activity extends BaseGameActivity {
             return;
         }
 
-        String player = model.getCurrentPlayer();
-        gameRef.child("board").child(row + "_" + col).setValue(player);
-
-        // Update model to check for next state
-        model.makeMove(row, col);
-        if (model.checkWin() || model.isTie()) {
-            gameRef.child("gameFinished").setValue(true);
-        } else {
-            model.changePlayer();
-            gameRef.child("currentPlayer").setValue(model.getCurrentPlayer());
-        }
+        submitMove(row, col);
     }
 
     private void resetFirebaseState() {
-        gameRef.child("currentPlayer").setValue("X");
-        gameRef.child("gameFinished").setValue(false);
-        for (int r = 0; r < 3; r++) {
-            for (int c = 0; c < 3; c++) {
-                gameRef.child("board").child(r + "_" + c).setValue("");
+        if (!gameReady) {
+            Toast.makeText(this, "The shared game is not available yet.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        gameRef.setValue(newGameState()).addOnFailureListener(error ->
+                showSyncError("Could not reset the game", error));
+    }
+
+    /** Creates the shared board once, without overwriting a game another player already started. */
+    private void ensureGameExists() {
+        gameRef.runTransaction(new Transaction.Handler() {
+            @NonNull
+            @Override
+            public Transaction.Result doTransaction(@NonNull MutableData currentData) {
+                if (currentData.getValue() == null) {
+                    currentData.setValue(newGameState());
+                }
+                return Transaction.success(currentData);
+            }
+
+            @Override
+            public void onComplete(@Nullable DatabaseError error, boolean committed,
+                                   @Nullable DataSnapshot currentData) {
+                if (error != null) {
+                    showSyncError("Could not create the shared game", error.toException());
+                }
+            }
+        });
+    }
+
+    /**
+     * A transaction prevents two devices from taking the same square or both moving for one turn.
+     * The listener redraws only after Firebase commits the winning state.
+     */
+    private void submitMove(int row, int col) {
+        gameRef.runTransaction(new Transaction.Handler() {
+            @NonNull
+            @Override
+            public Transaction.Result doTransaction(@NonNull MutableData currentData) {
+                Object rawGame = currentData.getValue();
+                if (!(rawGame instanceof Map)) {
+                    return Transaction.abort();
+                }
+
+                Map<String, Object> game = new HashMap<>((Map<String, Object>) rawGame);
+                if (Boolean.TRUE.equals(game.get("gameFinished"))) {
+                    return Transaction.abort();
+                }
+
+                Map<String, Object> board = boardFrom(game);
+                String key = cellKey(row, col);
+                String existingMark = stringValue(board.get(key));
+                if (!existingMark.isEmpty()) {
+                    return Transaction.abort();
+                }
+
+                String player = "O".equals(game.get("currentPlayer")) ? "O" : "X";
+                board.put(key, player);
+                game.put("board", board);
+
+                if (hasWinner(board, player)) {
+                    game.put("gameFinished", true);
+                    game.put("winner", player);
+                } else if (isTie(board)) {
+                    game.put("gameFinished", true);
+                    game.put("winner", "");
+                } else {
+                    game.put("currentPlayer", "X".equals(player) ? "O" : "X");
+                }
+                currentData.setValue(game);
+                return Transaction.success(currentData);
+            }
+
+            @Override
+            public void onComplete(@Nullable DatabaseError error, boolean committed,
+                                   @Nullable DataSnapshot currentData) {
+                if (error != null) {
+                    showSyncError("Move was not saved", error.toException());
+                } else if (!committed) {
+                    Toast.makeText(Main2Activity.this, "That square is no longer available.",
+                            Toast.LENGTH_SHORT).show();
+                }
+            }
+        });
+    }
+
+    private Map<String, Object> newGameState() {
+        Map<String, Object> board = new HashMap<>();
+        for (int row = 0; row < 3; row++) {
+            for (int col = 0; col < 3; col++) {
+                board.put(cellKey(row, col), "");
             }
         }
+        Map<String, Object> game = new HashMap<>();
+        game.put("board", board);
+        game.put("currentPlayer", "X");
+        game.put("gameFinished", false);
+        game.put("winner", "");
+        return game;
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> boardFrom(Map<String, Object> game) {
+        Object rawBoard = game.get("board");
+        return rawBoard instanceof Map
+                ? new HashMap<>((Map<String, Object>) rawBoard)
+                : new HashMap<>();
+    }
+
+    private boolean hasWinner(Map<String, Object> board, String player) {
+        return hasLine(board, player, 0, 0, 0, 1, 0, 2)
+                || hasLine(board, player, 1, 0, 1, 1, 1, 2)
+                || hasLine(board, player, 2, 0, 2, 1, 2, 2)
+                || hasLine(board, player, 0, 0, 1, 0, 2, 0)
+                || hasLine(board, player, 0, 1, 1, 1, 2, 1)
+                || hasLine(board, player, 0, 2, 1, 2, 2, 2)
+                || hasLine(board, player, 0, 0, 1, 1, 2, 2)
+                || hasLine(board, player, 0, 2, 1, 1, 2, 0);
+    }
+
+    private boolean hasLine(Map<String, Object> board, String player, int r1, int c1,
+                            int r2, int c2, int r3, int c3) {
+        return player.equals(stringValue(board.get(cellKey(r1, c1))))
+                && player.equals(stringValue(board.get(cellKey(r2, c2))))
+                && player.equals(stringValue(board.get(cellKey(r3, c3))));
+    }
+
+    private boolean isTie(Map<String, Object> board) {
+        for (int row = 0; row < 3; row++) {
+            for (int col = 0; col < 3; col++) {
+                if (stringValue(board.get(cellKey(row, col))).isEmpty()) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    private String cellKey(int row, int col) {
+        return row + "_" + col;
+    }
+
+    private String stringValue(Object value) {
+        return value instanceof String ? (String) value : "";
+    }
+
+    private void showSyncError(String prefix, Exception error) {
+        String message = error.getLocalizedMessage();
+        Toast.makeText(this, prefix + (message == null ? "." : ": " + message),
+                Toast.LENGTH_LONG).show();
+    }
+
+    private String permissionMessage(DatabaseError error) {
+        if (error.getCode() == DatabaseError.PERMISSION_DENIED) {
+            return "Firebase denied access. Allow authenticated read and write at /tictactoe in RTDB Rules.";
+        }
+        return "Sync error: " + error.getMessage();
     }
 
     @Override

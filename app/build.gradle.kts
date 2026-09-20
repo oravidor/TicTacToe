@@ -33,11 +33,13 @@ android {
 }
 
 dependencies {
+    implementation(platform(libs.firebase.bom))   // manages Firebase artifact versions
     implementation(libs.activity.ktx)
     implementation(libs.appcompat)
     implementation(libs.constraintlayout)
     implementation(libs.firebase.auth)
     implementation(libs.firebase.database)
+    implementation(libs.play.services.auth)        // needed for GoogleSignInClient / GoogleSignInOptions
     implementation(libs.material)
     testImplementation(libs.junit)
     androidTestImplementation(libs.espresso.core)

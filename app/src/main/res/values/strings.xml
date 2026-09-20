@@ -13,6 +13,7 @@
     <string name="password_hint">Password</string>
     <string name="remember_me">Remember me</string>
     <string name="login">Login</string>
+    <string name="create_account">Create account</string>
     <string name="login_with_google">Login with Google</string>
     <string name="game_title">Tic Tac Toe</string>
     <string name="new_game">New game</string>

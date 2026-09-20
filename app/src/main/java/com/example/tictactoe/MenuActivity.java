@@ -15,6 +15,9 @@ import androidx.fragment.app.Fragment;
 
 import com.google.android.material.appbar.MaterialToolbar;
 import com.google.android.material.navigation.NavigationView;
+import com.google.android.gms.auth.api.signin.GoogleSignIn;
+import com.google.android.gms.auth.api.signin.GoogleSignInOptions;
+import com.google.firebase.auth.FirebaseAuth;
 
 /** Main navigation drawer introduced in the 014a/014b course steps. */
 public class MenuActivity extends AppCompatActivity {
@@ -66,6 +69,8 @@ public class MenuActivity extends AppCompatActivity {
 
     public void logoutAndOpenLogin() {
         SessionStore.signOut(this);
+        FirebaseAuth.getInstance().signOut();
+        GoogleSignIn.getClient(this, GoogleSignInOptions.DEFAULT_SIGN_IN).signOut();
         Intent intent = new Intent(this, LoginActivity.class);
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
         startActivity(intent);
